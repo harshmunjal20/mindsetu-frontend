@@ -1,0 +1,6 @@
+{
+  "name": "Mindsetu: Bridge to Your Mind Wellness",
+  "description": "A React web application designed as a mental wellness companion for students. It features a mood journal, AI chatbot, gratitude space, calming corner, and a dashboard to track mood and academic well-being metrics. The app uses Gemini API for AI-powered features like chat responses and prompt generation.",
+  "requestFramePermissions": [],
+  "prompt": ""
+}
