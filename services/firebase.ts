@@ -6,13 +6,12 @@ import { getAuth } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
 
 const firebaseConfig = {
-  apiKey: "AIzaSyBHrdmEaJfXt1dX2TBgkNXjVEBtC6rr3OU",
-  authDomain: "mindsetu-b0db5.firebaseapp.com",
-  projectId: "mindsetu-b0db5",
-  storageBucket: "mindsetu-b0db5.firebasestorage.app",
-  messagingSenderId: "1076454011107",
-  appId: "1:1076454011107:web:4e3e755dacd1e6dfe615d6",
-  measurementId: "G-L5FBTCB85W"
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID
 };
 
 // Initialize Firebase
