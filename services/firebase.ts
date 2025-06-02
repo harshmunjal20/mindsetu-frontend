@@ -1,8 +1,9 @@
-// services/firebase.ts
+
+
+// firebase.ts
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
-import { getAnalytics } from 'firebase/analytics';
 
 const firebaseConfig = {
   apiKey: "AIzaSyBHrdmEaJfXt1dX2TBgkNXjVEBtC6rr3OU",
@@ -14,8 +15,13 @@ const firebaseConfig = {
   measurementId: "G-L5FBTCB85W"
 };
 
+// Initialize Firebase
 const app = initializeApp(firebaseConfig);
-const analytics = getAnalytics(app);
 
+// Initialize Firebase Authentication and get a reference to the service
 export const auth = getAuth(app);
+
+// Initialize Cloud Firestore and get a reference to the service
 export const db = getFirestore(app);
+
+export default app;
