@@ -1,308 +1,386 @@
+// services/authService.ts
+import { 
+  createUserWithEmailAndPassword, 
+  signInWithEmailAndPassword, 
+  signOut,
+  User
+} from 'firebase/auth';
+import { 
+  doc, 
+  setDoc, 
+  getDoc, 
+  collection, 
+  query, 
+  where, 
+  getDocs,
+  addDoc,
+  serverTimestamp
+} from 'firebase/firestore';
+import { auth, db } from '../firebase';
+import { SignupFormData, CurrentUser, UserType, AddStudentFormData, AddTeacherFormData } from '../types';
 
-import { User, SignupFormData, CurrentUser, ApiResponse, AddStudentFormData, UserType } from '../types';
+// Collections in Firestore
+const USERS_COLLECTION = 'users';
+const INSTITUTES_COLLECTION = 'institutes';
+const PRE_REGISTERED_USERS_COLLECTION = 'preRegisteredUsers';
 
+interface ApiResponse<T = any> {
+  success: boolean;
+  data?: T;
+  error?: string;
+  message?: string;
+}
 
-const USERS_STORAGE_KEY = 'mindsetu_users';
-
-// Helper to get users from localStorage
-export const getUsers = (): User[] => { 
-  const usersJson = localStorage.getItem(USERS_STORAGE_KEY);
-  return usersJson ? JSON.parse(usersJson) : [];
+// Helper function to create user document
+const createUserDocument = async (user: User, userData: any) => {
+  const userRef = doc(db, USERS_COLLECTION, user.uid);
+  await setDoc(userRef, {
+    ...userData,
+    uid: user.uid,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp()
+  });
 };
 
-// Helper to save users to localStorage
-const saveUsers = (users: User[]): void => {
-  localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(users));
+// Helper function to check if institute exists
+const checkInstituteExists = async (instituteName: string): Promise<boolean> => {
+  const instituteQuery = query(
+    collection(db, INSTITUTES_COLLECTION),
+    where('name', '==', instituteName.toLowerCase())
+  );
+  const snapshot = await getDocs(instituteQuery);
+  return !snapshot.empty;
 };
 
-// Initialize with more diverse mock data if none exists
-const initializeMockUsers = () => {
-  const existingUsers = getUsers();
-  if (existingUsers.length === 0) {
-    const mockUsers: User[] = [
-      // Admin for "Greenwood High"
-      {
-        id: 'admin1',
-        firstName: 'Alice',
-        lastName: 'Principal',
-        email: 'alice@greenwood.edu',
-        password: 'password123',
-        userType: UserType.Admin,
-        instituteName: 'greenwood high',
-        isActivated: true,
-        isPreRegisteredByAdmin: false,
-      },
-      // Students for "Greenwood High"
-      {
-        id: 'student1gw',
-        firstName: 'Bob',
-        lastName: 'Smith',
-        email: 'bob@greenwood.edu',
-        password: 'password123',
-        userType: UserType.Student,
-        instituteName: 'greenwood high',
-        isActivated: true,
-        isPreRegisteredByAdmin: true,
-      },
-      {
-        id: 'student2gw',
-        firstName: 'Charlie',
-        lastName: 'Brown',
-        email: 'charlie@greenwood.edu',
-        password: 'password123',
-        userType: UserType.Student,
-        instituteName: 'greenwood high',
-        isActivated: true,
-        isPreRegisteredByAdmin: true,
-      },
-      {
-        id: 'student3gw',
-        firstName: 'Diana',
-        lastName: 'Prince',
-        email: 'diana@greenwood.edu',
-        // No password, pre-registered but not yet activated by student signup
-        userType: UserType.Student,
-        instituteName: 'greenwood high',
-        isActivated: false,
-        isPreRegisteredByAdmin: true,
-      },
-       {
-        id: 'student4gw',
-        firstName: 'Edward',
-        lastName: 'Nigma',
-        email: 'edward@greenwood.edu',
-        password: 'password123',
-        userType: UserType.Student,
-        instituteName: 'greenwood high',
-        isActivated: true,
-        isPreRegisteredByAdmin: true,
-      },
-      {
-        id: 'student5gw',
-        firstName: 'Fiona',
-        lastName: 'Gallagher',
-        email: 'fiona@greenwood.edu',
-        password: 'password123',
-        userType: UserType.Student,
-        instituteName: 'greenwood high',
-        isActivated: true,
-        isPreRegisteredByAdmin: true,
-      },
+// Helper function to create institute
+const createInstitute = async (instituteName: string, superAdminUid: string) => {
+  const instituteRef = collection(db, INSTITUTES_COLLECTION);
+  await addDoc(instituteRef, {
+    name: instituteName.toLowerCase(),
+    displayName: instituteName,
+    superAdminUid,
+    createdAt: serverTimestamp(),
+    isActive: true
+  });
+};
 
-      // Admin for "Oakwood Academy"
-      {
-        id: 'admin2',
-        firstName: 'David',
-        lastName: 'Dean',
-        email: 'david@oakwood.edu',
-        password: 'password123',
-        userType: UserType.Admin,
-        instituteName: 'oakwood academy',
-        isActivated: true,
-        isPreRegisteredByAdmin: false,
-      },
-      // Students for "Oakwood Academy"
-      {
-        id: 'student1oa',
-        firstName: 'Eve',
-        lastName: 'Online',
-        email: 'eve@oakwood.edu',
-        password: 'password123',
-        userType: UserType.Student,
-        instituteName: 'oakwood academy',
-        isActivated: true,
-        isPreRegisteredByAdmin: true,
-      },
-      {
-        id: 'student2oa',
-        firstName: 'Frank',
-        lastName: 'Castle',
-        email: 'frank@oakwood.edu',
-        password: 'password123',
-        userType: UserType.Student,
-        instituteName: 'oakwood academy',
-        isActivated: true,
-        isPreRegisteredByAdmin: true,
-      },
-    ];
-    saveUsers(mockUsers);
+// Helper function to check pre-registration
+const checkPreRegistration = async (email: string, instituteName: string, userType: UserType) => {
+  const preRegQuery = query(
+    collection(db, PRE_REGISTERED_USERS_COLLECTION),
+    where('email', '==', email.toLowerCase()),
+    where('instituteName', '==', instituteName.toLowerCase()),
+    where('userType', '==', userType),
+    where('isUsed', '==', false)
+  );
+  const snapshot = await getDocs(preRegQuery);
+  return snapshot.docs[0] || null;
+};
+
+// Sign up function
+export const signupUser = async (formData: SignupFormData): Promise<ApiResponse<CurrentUser>> => {
+  try {
+    const { firstName, lastName, email, password, userType, instituteName } = formData;
+    
+    // For SuperAdmin: Check if institute already exists
+    if (userType === UserType.SuperAdmin) {
+      const instituteExists = await checkInstituteExists(instituteName);
+      if (instituteExists) {
+        return {
+          success: false,
+          error: 'An institute with this name already exists. Please contact support if you are the authorized SuperAdmin.'
+        };
+      }
+    } else {
+      // For Teacher/Student: Check if institute exists
+      const instituteExists = await checkInstituteExists(instituteName);
+      if (!instituteExists) {
+        return {
+          success: false,
+          error: 'Institute not found. Please verify the institute name or contact your administrator.'
+        };
+      }
+
+      // Check pre-registration
+      const preRegDoc = await checkPreRegistration(email, instituteName, userType);
+      if (!preRegDoc) {
+        return {
+          success: false,
+          error: `You must be pre-registered by a ${userType === UserType.Teacher ? 'SuperAdmin' : 'Teacher'} before signing up.`
+        };
+      }
+    }
+
+    // Create Firebase user
+    const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+    const user = userCredential.user;
+
+    // Prepare user data
+    const userData = {
+      firstName,
+      lastName,
+      email: email.toLowerCase(),
+      userType,
+      instituteName: instituteName.toLowerCase(),
+      displayInstituteName: instituteName,
+      isActive: true
+    };
+
+    // Create user document
+    await createUserDocument(user, userData);
+
+    // If SuperAdmin, create institute
+    if (userType === UserType.SuperAdmin) {
+      await createInstitute(instituteName, user.uid);
+    } else {
+      // Mark pre-registration as used
+      const preRegDoc = await checkPreRegistration(email, instituteName, userType);
+      if (preRegDoc) {
+        await setDoc(doc(db, PRE_REGISTERED_USERS_COLLECTION, preRegDoc.id), 
+          { isUsed: true, usedAt: serverTimestamp() }, 
+          { merge: true }
+        );
+      }
+    }
+
+    const currentUser: CurrentUser = {
+      uid: user.uid,
+      firstName,
+      lastName,
+      email: email.toLowerCase(),
+      userType,
+      instituteName: instituteName.toLowerCase(),
+      displayInstituteName: instituteName
+    };
+
+    return {
+      success: true,
+      data: currentUser,
+      message: 'Account created successfully!'
+    };
+
+  } catch (error: any) {
+    console.error('Signup error:', error);
+    let errorMessage = 'Signup failed. Please try again.';
+    
+    if (error.code === 'auth/email-already-in-use') {
+      errorMessage = 'An account with this email already exists.';
+    } else if (error.code === 'auth/weak-password') {
+      errorMessage = 'Password is too weak. Please choose a stronger password.';
+    } else if (error.code === 'auth/invalid-email') {
+      errorMessage = 'Please enter a valid email address.';
+    }
+
+    return {
+      success: false,
+      error: errorMessage
+    };
   }
 };
-initializeMockUsers();
 
+// Login function
+export const loginUser = async (email: string, password: string, instituteName: string): Promise<ApiResponse<CurrentUser>> => {
+  try {
+    // Sign in with Firebase
+    const userCredential = await signInWithEmailAndPassword(auth, email, password);
+    const user = userCredential.user;
 
-export const signupUser = async (formData: SignupFormData): Promise<ApiResponse<CurrentUser>> => {
-  return new Promise((resolve) => {
-    setTimeout(() => { // Simulate network delay
-      const users = getUsers();
-      const instituteNameLower = formData.instituteName.toLowerCase();
-
-      if (!formData.password || formData.password.length < 6) {
-        resolve({ success: false, error: 'Password must be at least 6 characters long.' });
-        return;
-      }
-      if (formData.password !== formData.confirmPassword) {
-        resolve({ success: false, error: 'Passwords do not match.' });
-        return;
-      }
-      if (!formData.instituteName.trim()) {
-        resolve({ success: false, error: 'Institute name is required.' });
-        return;
-      }
-
-      if (formData.userType === UserType.Admin) {
-        const existingAdminForInstitute = users.find(user => user.userType === UserType.Admin && user.instituteName === instituteNameLower);
-        if (existingAdminForInstitute) {
-          resolve({ success: false, error: `An admin for institute '${formData.instituteName}' already exists.` });
-          return;
-        }
-        // Check if email is already used by another admin, regardless of institute
-        const existingAdminEmail = users.find(user => user.userType === UserType.Admin && user.email === formData.email);
-        if (existingAdminEmail) {
-            resolve({ success: false, error: `This email is already registered by an administrator.` });
-            return;
-        }
-
-        const newAdmin: User = {
-          id: Date.now().toString(),
-          firstName: formData.firstName,
-          lastName: formData.lastName,
-          email: formData.email,
-          password: formData.password,
-          userType: UserType.Admin,
-          instituteName: instituteNameLower,
-          isActivated: true, // Admins are active on creation
-          isPreRegisteredByAdmin: false, 
-        };
-        users.push(newAdmin);
-        saveUsers(users);
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        const { password, ...adminToReturn } = newAdmin;
-        resolve({ success: true, data: adminToReturn });
-
-      } else { // UserType.Student - Account Claiming
-        const instituteAdminExists = users.some(user => user.userType === UserType.Admin && user.instituteName === instituteNameLower);
-        if (!instituteAdminExists) {
-          resolve({ success: false, error: `Institute '${formData.instituteName}' is not registered with Mindsetu. Please contact your institute administrator.` });
-          return;
-        }
-
-        const studentIndex = users.findIndex(user => 
-          user.email === formData.email && 
-          user.instituteName === instituteNameLower &&
-          user.userType === UserType.Student
-        );
-
-        if (studentIndex === -1) {
-          resolve({ success: false, error: 'You have not been pre-registered by an administrator for this institute. Please contact them.' });
-          return;
-        }
-
-        const studentToActivate = users[studentIndex];
-
-        if (!studentToActivate.isPreRegisteredByAdmin) {
-             resolve({ success: false, error: 'This account was not pre-registered by an administrator. Please contact them.' });
-             return;
-        }
-
-        if (studentToActivate.isActivated) {
-          resolve({ success: false, error: 'This account is already active. Please try logging in.' });
-          return;
-        }
-        
-        // Activate the student
-        studentToActivate.password = formData.password;
-        studentToActivate.firstName = formData.firstName; // Allow student to confirm/update their name
-        studentToActivate.lastName = formData.lastName;
-        studentToActivate.isActivated = true;
-        
-        users[studentIndex] = studentToActivate;
-        saveUsers(users);
-
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        const { password, ...activatedStudent } = studentToActivate;
-        resolve({ success: true, data: activatedStudent, message: 'Account activated successfully! You can now log in.' } as any); 
-      }
-    }, 500);
-  });
-};
-
-export const loginUser = async (emailInput: string, passwordInput: string, instituteNameInput: string): Promise<ApiResponse<CurrentUser>> => {
-  return new Promise((resolve) => {
-    setTimeout(() => { // Simulate network delay
-      const users = getUsers();
-      const instituteNameLower = instituteNameInput.toLowerCase();
-      const potentialUser = users.find(u => u.email === emailInput && u.instituteName === instituteNameLower);
-
-      if (!potentialUser) {
-        resolve({ success: false, error: 'Invalid email, institute, or user not found.' });
-        return;
-      }
-
-      if (potentialUser.password !== passwordInput) {
-        resolve({ success: false, error: 'Invalid password.' });
-        return;
-      }
-
-      if (!potentialUser.isActivated) {
-        if (potentialUser.userType === UserType.Student && potentialUser.isPreRegisteredByAdmin) {
-             resolve({ success: false, error: 'Your account has been pre-registered. Please complete the signup process to activate your account and set your password.' });
-        } else if (potentialUser.userType === UserType.Student) {
-             resolve({ success: false, error: 'Your student account is not active. Please contact your institute administrator.' });
-        } else {
-            resolve({ success: false, error: 'This account is not currently active.' });
-        }
-        return;
-      }
-      
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      const { password, ...userToReturn } = potentialUser; 
-      resolve({ success: true, data: userToReturn });
-    }, 500);
-  });
-};
-
-export const adminAddStudent = async (adminUser: CurrentUser, studentData: AddStudentFormData): Promise<ApiResponse<User>> => {
-   return new Promise((resolve) => {
-    setTimeout(() => {
-      if (adminUser.userType !== UserType.Admin) {
-        resolve({ success: false, error: "Unauthorized: Only Admins can add students." });
-        return;
-      }
-
-      const users = getUsers();
-      const existingStudent = users.find(user => user.email === studentData.email && user.instituteName === adminUser.instituteName);
-      
-      if (existingStudent) {
-        if (existingStudent.isActivated) {
-            resolve({ success: false, error: `Student with email ${studentData.email} already exists and is active at ${adminUser.instituteName}.` });
-        } else if (existingStudent.isPreRegisteredByAdmin) {
-            resolve({ success: false, error: `Student with email ${studentData.email} is already pre-registered and pending activation by the student.` });
-        } else {
-            // This case should ideally not happen if flow is followed, but handles if a student record exists somehow without pre-registration.
-            resolve({ success: false, error: `An account for ${studentData.email} at ${adminUser.instituteName} already exists with an undetermined status. Please review.` });
-        }
-        return;
-      }
-
-      const newStudent: User = {
-        id: Date.now().toString(),
-        firstName: studentData.firstName,
-        lastName: studentData.lastName,
-        email: studentData.email,
-        // Password is not set by admin; student sets it during their signup/claim process
-        userType: UserType.Student, 
-        instituteName: adminUser.instituteName, // Inherit admin's institute name (already lowercase)
-        isActivated: false, // Student is NOT active until they complete signup
-        isPreRegisteredByAdmin: true, // Marked as pre-registered by admin
+    // Get user document from Firestore
+    const userDoc = await getDoc(doc(db, USERS_COLLECTION, user.uid));
+    
+    if (!userDoc.exists()) {
+      await signOut(auth);
+      return {
+        success: false,
+        error: 'User profile not found. Please contact support.'
       };
-      users.push(newStudent);
-      saveUsers(users);
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      const { password, ...studentToReturn } = newStudent;
-      resolve({ success: true, data: studentToReturn, message: `Student ${newStudent.firstName} pre-registered. They can now complete their signup.` } as any);
-    }, 500);
-  });
+    }
+
+    const userData = userDoc.data();
+
+    // Verify institute name matches
+    if (userData.instituteName !== instituteName.toLowerCase()) {
+      await signOut(auth);
+      return {
+        success: false,
+        error: 'Institute name does not match your account. Please verify the institute name.'
+      };
+    }
+
+    // Check if user is active
+    if (!userData.isActive) {
+      await signOut(auth);
+      return {
+        success: false,
+        error: 'Your account has been deactivated. Please contact your administrator.'
+      };
+    }
+
+    const currentUser: CurrentUser = {
+      uid: user.uid,
+      firstName: userData.firstName,
+      lastName: userData.lastName,
+      email: userData.email,
+      userType: userData.userType,
+      instituteName: userData.instituteName,
+      displayInstituteName: userData.displayInstituteName || instituteName
+    };
+
+    return {
+      success: true,
+      data: currentUser,
+      message: 'Login successful!'
+    };
+
+  } catch (error: any) {
+    console.error('Login error:', error);
+    let errorMessage = 'Login failed. Please try again.';
+    
+    if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password') {
+      errorMessage = 'Invalid email or password.';
+    } else if (error.code === 'auth/invalid-email') {
+      errorMessage = 'Please enter a valid email address.';
+    } else if (error.code === 'auth/too-many-requests') {
+      errorMessage = 'Too many failed attempts. Please try again later.';
+    }
+
+    return {
+      success: false,
+      error: errorMessage
+    };
+  }
 };
 
+// Teacher adds student
+export const teacherAddStudent = async (currentUser: CurrentUser, formData: AddStudentFormData): Promise<ApiResponse> => {
+  try {
+    if (currentUser.userType !== UserType.Teacher && currentUser.userType !== UserType.SuperAdmin) {
+      return {
+        success: false,
+        error: 'Only teachers and super admins can add students.'
+      };
+    }
 
+    const { firstName, lastName, email } = formData;
+
+    // Check if email is already pre-registered
+    const existingPreReg = await checkPreRegistration(email, currentUser.instituteName, UserType.Student);
+    if (existingPreReg) {
+      return {
+        success: false,
+        error: 'This student is already pre-registered.'
+      };
+    }
+
+    // Check if user already exists with this email
+    const existingUserQuery = query(
+      collection(db, USERS_COLLECTION),
+      where('email', '==', email.toLowerCase())
+    );
+    const existingUserSnapshot = await getDocs(existingUserQuery);
+    if (!existingUserSnapshot.empty) {
+      return {
+        success: false,
+        error: 'A user with this email already exists.'
+      };
+    }
+
+    // Add to pre-registration collection
+    await addDoc(collection(db, PRE_REGISTERED_USERS_COLLECTION), {
+      firstName,
+      lastName,
+      email: email.toLowerCase(),
+      userType: UserType.Student,
+      instituteName: currentUser.instituteName,
+      displayInstituteName: currentUser.displayInstituteName,
+      addedBy: currentUser.uid,
+      addedByName: `${currentUser.firstName} ${currentUser.lastName}`,
+      isUsed: false,
+      createdAt: serverTimestamp()
+    });
+
+    return {
+      success: true,
+      message: `Student ${firstName} ${lastName} has been pre-registered successfully!`
+    };
+
+  } catch (error: any) {
+    console.error('Add student error:', error);
+    return {
+      success: false,
+      error: 'Failed to pre-register student. Please try again.'
+    };
+  }
+};
+
+// SuperAdmin adds teacher
+export const superAdminAddTeacher = async (currentUser: CurrentUser, formData: AddTeacherFormData): Promise<ApiResponse> => {
+  try {
+    if (currentUser.userType !== UserType.SuperAdmin) {
+      return {
+        success: false,
+        error: 'Only super admins can add teachers.'
+      };
+    }
+
+    const { firstName, lastName, email } = formData;
+
+    // Check if email is already pre-registered
+    const existingPreReg = await checkPreRegistration(email, currentUser.instituteName, UserType.Teacher);
+    if (existingPreReg) {
+      return {
+        success: false,
+        error: 'This teacher is already pre-registered.'
+      };
+    }
+
+    // Check if user already exists with this email
+    const existingUserQuery = query(
+      collection(db, USERS_COLLECTION),
+      where('email', '==', email.toLowerCase())
+    );
+    const existingUserSnapshot = await getDocs(existingUserQuery);
+    if (!existingUserSnapshot.empty) {
+      return {
+        success: false,
+        error: 'A user with this email already exists.'
+      };
+    }
+
+    // Add to pre-registration collection
+    await addDoc(collection(db, PRE_REGISTERED_USERS_COLLECTION), {
+      firstName,
+      lastName,
+      email: email.toLowerCase(),
+      userType: UserType.Teacher,
+      instituteName: currentUser.instituteName,
+      displayInstituteName: currentUser.displayInstituteName,
+      addedBy: currentUser.uid,
+      addedByName: `${currentUser.firstName} ${currentUser.lastName}`,
+      isUsed: false,
+      createdAt: serverTimestamp()
+    });
+
+    return {
+      success: true,
+      message: `Teacher ${firstName} ${lastName} has been pre-registered successfully!`
+    };
+
+  } catch (error: any) {
+    console.error('Add teacher error:', error);
+    return {
+      success: false,
+      error: 'Failed to pre-register teacher. Please try again.'
+    };
+  }
+};
+
+// Logout function
+export const logoutUser = async (): Promise<void> => {
+  try {
+    await signOut(auth);
+  } catch (error) {
+    console.error('Logout error:', error);
+    throw error;
+  }
+};
