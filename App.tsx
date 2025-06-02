@@ -1,26 +1,25 @@
-
 import React, { useState, useEffect, useMemo } from 'react';
 import { Routes, Route, useLocation, useNavigate, Navigate } from 'react-router-dom';
-import { Navbar } from './componen/Navbar';
-import { LandingPageView } from './componen/LandingPageView';
-import { LoginPage } from './componen/LoginPage';
-import { SignupPage } from './componen/SignupPage';
-import { DashboardView } from './componen/DashboardView';
-import { ChatbotView } from './componen/ChatbotView';
-import { JournalView } from './componen/JournalView'; 
-import { AcademicPerformanceView } from './componen/AcademicPerformanceView'; 
-import { AssignmentSubmissionView } from './componen/AssignmentSubmissionView'; 
-import { SubscriptionPageView } from './componen/SubscriptionPageView'; 
-import { AddStudentView } from './componen/AddStudentView'; 
-import { EmergencySOSButton } from './componen/EmergencySOSButton';
+import { onAuthStateChanged } from 'firebase/auth';
+import { doc, getDoc } from 'firebase/firestore';
+import { auth, db } from './firebase';
+import { Navbar } from './components/Navbar';
+import { LandingPageView } from './components/LandingPageView';
+import { LoginPage } from './components/LoginPage';
+import { SignupPage } from './components/SignupPage';
+import { DashboardView } from './components/DashboardView';
+import { ChatbotView } from './components/ChatbotView';
+import { JournalView } from './components/JournalView'; 
+import { AcademicPerformanceView } from './components/AcademicPerformanceView'; 
+import { AssignmentSubmissionView } from './components/AssignmentSubmissionView'; 
+import { SubscriptionPageView } from './components/SubscriptionPageView'; 
+import { AddStudentView } from './components/AddStudentView'; 
+import { AddTeacherView } from './components/AddTeacherView'; 
+import { EmergencySOSButton } from './components/EmergencySOSButton';
 import { Theme, UserType, CurrentUser } from './types';
 import { THEME_KEY, APP_NAME, APP_TAGLINE } from './constants';
 import { clearActiveChat } from './services/geminiService';
-import { getAuth } from "firebase/auth";
-import axios from "axios";
-
-
-const CURRENT_USER_KEY = 'mindsetu-currentUser';
+import { logoutUser } from './services/authService';
 
 const App: React.FC = () => {
   const [theme, setTheme] = useState<Theme>(() => {
@@ -28,35 +27,51 @@ const App: React.FC = () => {
     return storedTheme || 'light';
   });
 
-  const registerUser = async (role: string, instituteId: string) => {
-  const auth = getAuth();
-  const user = auth.currentUser;
-  const token = await user?.getIdToken();
-
-  await axios.post(
-    "http://localhost:5000/api/auth/register",
-    {
-      uid: user?.uid,
-      name: user?.displayName,
-      email: user?.email,
-      role,
-      instituteId,
-    },
-    {
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-    }
-  );
-};
-
-  const [currentUser, setCurrentUser] = useState<CurrentUser | null>(() => {
-    const storedUser = localStorage.getItem(CURRENT_USER_KEY);
-    return storedUser ? JSON.parse(storedUser) : null;
-  });
-
+  const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
   const location = useLocation();
   const navigate = useNavigate();
+
+  // Firebase auth state listener
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      setIsLoading(true);
+      
+      if (firebaseUser) {
+        try {
+          // Get user data from Firestore
+          const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
+          
+          if (userDoc.exists()) {
+            const userData = userDoc.data();
+            const user: CurrentUser = {
+              uid: firebaseUser.uid,
+              firstName: userData.firstName,
+              lastName: userData.lastName,
+              email: userData.email,
+              userType: userData.userType,
+              instituteName: userData.instituteName,
+              displayInstituteName: userData.displayInstituteName || userData.instituteName
+            };
+            setCurrentUser(user);
+          } else {
+            // User document doesn't exist, sign out
+            await logoutUser();
+            setCurrentUser(null);
+          }
+        } catch (error) {
+          console.error('Error fetching user data:', error);
+          setCurrentUser(null);
+        }
+      } else {
+        setCurrentUser(null);
+      }
+      
+      setIsLoading(false);
+    });
+
+    return () => unsubscribe();
+  }, []);
 
   useEffect(() => {
     if (theme === 'dark') {
@@ -69,15 +84,6 @@ const App: React.FC = () => {
     localStorage.setItem(THEME_KEY, theme);
   }, [theme]);
 
-  useEffect(() => {
-    if (currentUser) {
-      localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(currentUser));
-    } else {
-      localStorage.removeItem(CURRENT_USER_KEY);
-    }
-  }, [currentUser]);
-
-
   const toggleTheme = () => {
     setTheme((prevTheme) => (prevTheme === 'light' ? 'dark' : 'light'));
   };
@@ -87,10 +93,15 @@ const App: React.FC = () => {
     navigate('/dashboard'); 
   };
 
-  const handleLogout = () => {
-    setCurrentUser(null);
-    clearActiveChat(); 
-    navigate('/login');
+  const handleLogout = async () => {
+    try {
+      await logoutUser();
+      setCurrentUser(null);
+      clearActiveChat(); 
+      navigate('/login');
+    } catch (error) {
+      console.error('Logout error:', error);
+    }
   };
   
   const pageTitle = useMemo(() => {
@@ -100,6 +111,7 @@ const App: React.FC = () => {
     if (path === '/signup') return `Sign Up - ${APP_NAME}`;
     if (path === '/subscription') return `Subscription Plans - ${APP_NAME}`;
     if (path === '/add-student') return `Add Student - ${APP_NAME}`;
+    if (path === '/add-teacher') return `Add Teacher - ${APP_NAME}`;
 
     if (currentUser) { 
       if (path === '/dashboard') return `Dashboard - ${currentUser.firstName}`;
@@ -114,6 +126,15 @@ const App: React.FC = () => {
   useEffect(() => {
     document.title = pageTitle;
   }, [pageTitle]);
+
+  // Show loading spinner while checking auth state
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-brand-primary"></div>
+      </div>
+    );
+  }
 
   const showPageHeader = location.pathname !== '/' && location.pathname !== '/login' && location.pathname !== '/signup' && location.pathname !== '/subscription';
   const mainBgColor = theme === 'dark' ? 'bg-base-100-dark text-base-content-dark' : 'bg-base-100-light text-base-content-light';
@@ -148,8 +169,17 @@ const App: React.FC = () => {
           <Route 
             path="/add-student" 
             element={
-              currentUser && currentUser.userType === UserType.Admin // Updated to check for UserType.Admin
+              currentUser && (currentUser.userType === UserType.Teacher || currentUser.userType === UserType.SuperAdmin)
               ? <AddStudentView currentUser={currentUser} /> 
+              : <Navigate to={currentUser ? "/dashboard" : "/login"} />
+            } 
+          />
+          
+          <Route 
+            path="/add-teacher" 
+            element={
+              currentUser && currentUser.userType === UserType.SuperAdmin
+              ? <AddTeacherView currentUser={currentUser} /> 
               : <Navigate to={currentUser ? "/dashboard" : "/login"} />
             } 
           />
@@ -164,25 +194,5 @@ const App: React.FC = () => {
     </div>
   );
 };
-const registerUser = async (role: string, instituteId: string) => {
-  const auth = getAuth();
-  const user = auth.currentUser;
-  const token = await user?.getIdToken();
 
-  await axios.post(
-    "http://localhost:5000/api/auth/register",
-    {
-      uid: user?.uid,
-      name: user?.displayName,
-      email: user?.email,
-      role,
-      instituteId,
-    },
-    {
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-    }
-  );
-};
 export default App;
